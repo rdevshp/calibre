@@ -2,7 +2,8 @@
 # License: GPL v3 Copyright: 2023, Kovid Goyal <kovid at kovidgoyal.net>
 from __python__ import bound_methods, hash_literals
 
-from read_book.globals import current_layout_mode, get_boss
+from read_book.flow_mode import flow_spine_section_for_name, has_flow_spine_sections
+from read_book.globals import current_layout_mode, current_spine_item, get_boss
 from read_book.viewport import scroll_viewport
 
 anchor_position_cache = {}
@@ -36,14 +37,18 @@ def position_for_anchor(anchor, is_page_list_anchor):
     if val?:
         return val
     anchor_funcs = get_boss().anchor_funcs
+    root = flow_spine_section_for_name(current_spine_item().name) if current_layout_mode() is 'flow' and has_flow_spine_sections() else None
     if anchor:
-        elem = document.getElementById(anchor)
+        elem = root.querySelector('#' + window.CSS.escape(anchor)) if root else document.getElementById(anchor)
         if not elem:
             q = document.getElementsByName(anchor)
             if q and q.length:
-                elem = q[0]
+                for candidate in q:
+                    if not root or root.contains(candidate):
+                        elem = candidate
+                        break
     else:
-        elem = document.body
+        elem = root or document.body
     if is_page_list_anchor:
         ensure_page_list_target_is_displayed(elem)
     val = anchor_funcs.pos_for_elem(elem) if elem else anchor_funcs.pos_for_elem()

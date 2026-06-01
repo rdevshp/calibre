@@ -244,6 +244,7 @@ class View:
             ,
             'bump_font_size': self.bump_font_size,
             'content_loaded': self.on_content_loaded,
+            'spine_item_changed': self.on_spine_item_changed,
             'error': self.on_iframe_error,
             'invisible_text': self.on_invisible_text,
             'goto_doc_boundary': def(data): self.goto_doc_boundary(data.start);,
@@ -1090,10 +1091,35 @@ class View:
         self.load_doc(name, self.show_spine_item)
 
     def load_doc(self, name, done_callback):
+        if self.currently_showing.settings.read_mode is 'flow':
+            return self.load_flow_docs(done_callback)
         def cb(resource_data):
             self.loaded_resources = resource_data
             done_callback(resource_data)
         load_resources(self.book, name, self.loaded_resources, cb)
+
+    def load_flow_docs(self, done_callback):
+        spine = self.book.manifest.spine
+        flow_items = v'[]'
+        resource_cache = self.loaded_resources or {}
+
+        def load_one(index):
+            if index >= spine.length:
+                self.loaded_resources = resource_cache
+                done_callback({'flow_items': flow_items})
+                return
+            name = spine[index]
+            if not name:
+                return setTimeout(load_one.bind(None, index + 1), 0)
+            load_resources(self.book, name, resource_cache, loaded.bind(None, name, index))
+
+        def loaded(name, index, resource_data):
+            for k in resource_data:
+                resource_cache[k] = resource_data[k]
+            flow_items.push({'name': name, 'index': index, 'resource_data': resource_data})
+            setTimeout(load_one.bind(None, index + 1), 0)
+
+        load_one(0)
 
     def goto_doc_boundary(self, start):
         name = self.book.manifest.spine[0 if start else self.book.manifest.spine.length - 1]
@@ -1229,19 +1255,21 @@ class View:
             return self.selection_bar.add_notes_or_create_highlight(notes, style)
         self.show_error(_('No selection'), _('Cannot create highlight as there is no active selection'))
 
-    def show_next_spine_item(self, previous):
+    def show_next_spine_item(self, previous=False):
         spine = self.book.manifest.spine
         idx = spine.indexOf(self.currently_showing.name)
+        initial_position = {
+            'type':'frac', 'frac':1 if previous else 0, 'replace_history':True
+        }
         if previous:
             if idx is 0:
                 return False
             idx = min(spine.length - 1, max(idx - 1, 0))
-            self.show_name(spine[idx], initial_position={'type':'frac', 'frac':1, 'replace_history':True})
         else:
             if idx is spine.length - 1:
                 return False
             idx = max(0, min(spine.length - 1, idx + 1))
-            self.show_name(spine[idx], initial_position={'type':'frac', 'frac':0, 'replace_history':True})
+        self.show_name(spine[idx], initial_position=initial_position)
         return True
 
     def on_next_spine_item(self, data):
@@ -1420,6 +1448,19 @@ class View:
             for fam in self.current_toc_families:
                 if fam.length:
                     r.push(fam[-1].id)
+            if runtime.additional_debug:
+                families = v'[]'
+                for fam in self.current_toc_families:
+                    family = v'[]'
+                    for node in fam:
+                        family.push([node.id, node.title, node.dest, node.frag])
+                    families.push(family)
+                print('TOC-HILITE-DIAG view.emit-current-toc-nodes {}'.format(JSON.stringify({
+                    'currently_showing': self.currently_showing?.name,
+                    'visible_anchors': data.visible_anchors,
+                    'families': families,
+                    'emitted_leaf_ids': r,
+                })))
             ui_operations.update_current_toc_nodes(r)
         self.update_header_footer()
 
@@ -1442,12 +1483,29 @@ class View:
             smil_map = fdata.smil_map
             self.currently_showing.smil_audio_map = get_smil_audio_map(smil_map)
         self.iframe_wrapper.send_unencrypted_message('display',
-            resource_data=resource_data, book=self.book, name=self.currently_showing.name,
+            resource_data=resource_data, flow_items=resource_data.flow_items or None, book=self.book, name=self.currently_showing.name,
             initial_position=self.currently_showing.initial_position, smil_map=smil_map or None,
             settings=self.currently_showing.settings, reference_mode_enabled=self.reference_mode_enabled,
             is_titlepage=self.currently_showing.name is self.book.manifest.title_page_name,
-            highlights=self.annotations_manager.highlights_for_currently_showing(),
+            additional_debug=runtime.additional_debug,
+            highlights=self.annotations_manager.all_highlights() if resource_data.flow_items else self.annotations_manager.highlights_for_currently_showing(),
         )
+
+    def on_spine_item_changed(self, data):
+        if runtime.additional_debug:
+            print('TOC-HILITE-DIAG view.spine-item-changed {}'.format(JSON.stringify({
+                'old_name': self.currently_showing.name, 'new_name': data.name, 'new_index': data.spine_index,
+            })))
+        if data.name is self.currently_showing.name:
+            return
+        self.currently_showing.name = data.name
+        self.currently_showing.spine_index = data.spine_index
+        set_current_spine_item(data.name)
+        self.timers.set_chapter(data.name)
+        self.currently_showing.bookpos = 'epubcfi(/{})'.format(2 * (data.spine_index + 1))
+        if ui_operations.content_file_changed:
+            ui_operations.content_file_changed(data.name)
+        self.update_header_footer()
 
     def on_content_loaded(self, data):
         for x in self.modal_overlays:

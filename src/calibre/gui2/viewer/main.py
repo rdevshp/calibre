@@ -96,9 +96,9 @@ class EventAccumulator(QObject):
             self.events = []
 
 
-def send_message_to_viewer_instance(args, open_at):
+def send_message_to_viewer_instance(args, open_at, additional_debug=False):
     if len(args) > 1:
-        msg = json.dumps((os.path.abspath(args[1]), open_at))
+        msg = json.dumps((os.path.abspath(args[1]), open_at, bool(additional_debug)))
         try:
             send_message_in_process(msg, address=viewer_socket_address())
         except Exception as err:
@@ -140,6 +140,8 @@ View an e-book.
         help=_('Continue reading the last opened book'))
     a('--new-instance', default=False, action='store_true', help=_(
         'Open a new viewer window even when the option to use only a single viewer window is set'))
+    a('--additional-debug', default=False, action='store_true', help=_(
+        'Print additional viewer diagnostics to stderr'))
 
     setup_gui_option_parser(parser)
     return parser
@@ -156,7 +158,7 @@ def run_gui(app, opts, args, internal_book_data, listener=None):
     migrate_previous_viewer_prefs()
     main = EbookViewer(
         open_at=opts.open_at, continue_reading=opts.continue_reading, force_reload=opts.force_reload,
-        calibre_book_data=internal_book_data)
+        calibre_book_data=internal_book_data, additional_debug=opts.additional_debug)
     main.set_exception_handler()
     app.shutdown_signal_received.connect(main.request_close)
     if len(args) > 1:
@@ -231,7 +233,7 @@ def main(args=sys.argv):
                     with closing(listener):
                         run_gui(app, opts, args, internal_book_data, listener=listener)
             else:
-                send_message_to_viewer_instance(args, opts.open_at)
+                send_message_to_viewer_instance(args, opts.open_at, opts.additional_debug)
     else:
         run_gui(app, opts, args, internal_book_data)
 

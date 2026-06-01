@@ -2,6 +2,9 @@
 # License: GPL v3 Copyright: 2020, Kovid Goyal <kovid at kovidgoyal.net>
 from __python__ import bound_methods, hash_literals
 
+from read_book.flow_mode import flow_spine_section_for_name, has_flow_spine_sections
+from read_book.globals import current_layout_mode, current_spine_item
+
 ignored_tags = {
     'style': True, 'script': True, 'noscript': True, 'title': True, 'meta': True, 'head': True, 'link': True, 'html': True,
     'img': True, 'rt': True, 'rp': True, 'rtc': True,
@@ -10,6 +13,12 @@ ignored_tags = {
 block_tags_for_tts = {
     'h1': True, 'h2': True, 'h3': True, 'h4': True, 'h5': True, 'h6': True, 'p': True, 'div': True, 'table': True, 'th': True, 'tr': True, 'td': True, 'section': True, 'article': True,
 }
+
+def text_map_root():
+    if current_layout_mode() is 'flow' and has_flow_spine_sections():
+        return flow_spine_section_for_name(current_spine_item().name) or document.body
+    return document.body
+
 
 def build_text_map(for_tts):
     node_list = v'[]'
@@ -54,7 +63,7 @@ def build_text_map(for_tts):
                     flat_text += '\u2029'
                     node_list[-1].length += 1
 
-    process_node(document.body)
+    process_node(text_map_root())
     return {'timestamp': window.performance.now(), 'flat_text': flat_text, 'node_list': node_list}
 
 

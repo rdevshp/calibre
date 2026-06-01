@@ -692,13 +692,13 @@ class WebView(QWebEngineView):
         self.current_content_file = data
         self.content_file_changed.emit(self.current_content_file)
 
-    def start_book_load(self, initial_position=None, highlights=None, current_book_data=None, reading_rates=None):
+    def start_book_load(self, initial_position=None, highlights=None, current_book_data=None, reading_rates=None, additional_debug=False):
         key = (set_book_path.path,)
         book_url = link_prefix_for_location_links(add_open_at=False)
         book_in_library_url = url_for_book_in_library()
         self.execute_when_ready(
             'start_book_load', key, initial_position, set_book_path.pathtoebook, highlights or [], book_url,
-            reading_rates, book_in_library_url)
+            reading_rates, book_in_library_url, bool(additional_debug))
 
     def execute_when_ready(self, action, *args):
         if self.bridge.ready:

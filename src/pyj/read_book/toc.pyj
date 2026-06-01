@@ -8,10 +8,11 @@ from complete import create_search_bar
 from dom import ensure_id, set_css, svgicon
 from gettext import gettext as _
 from modals import error_dialog
+from read_book.flow_mode import flow_spine_section_for_name, has_flow_spine_sections
 from read_book.anchor_visibility import position_for_anchor
 from read_book.globals import (
     current_book, current_layout_mode, current_spine_item, get_boss, set_toc_anchor_map,
-    toc_anchor_map
+    toc_anchor_map, runtime
 )
 from read_book.viewport import scroll_viewport
 from widgets import create_tree, find_text_in_tree, scroll_tree_item_into_view
@@ -20,6 +21,11 @@ from widgets import create_tree, find_text_in_tree, scroll_tree_item_into_view
 def update_visible_toc_nodes(visible_anchors):
     update_visible_toc_nodes.data = visible_anchors
 update_visible_toc_nodes.data = {}
+
+
+def toc_diag(tag, data):
+    if runtime.additional_debug:
+        print('TOC-HILITE-DIAG toc.{} {}'.format(tag, JSON.stringify(data)))
 
 
 def iter_toc_descendants(node, callback):
@@ -63,9 +69,9 @@ def get_toc_nodes_bordering_spine_item(toc, csi):
 def get_border_nodes(toc, id_map):
     data = update_visible_toc_nodes.data
     before, after = data.before, data.after
-    if before:
+    if before?:
         before = id_map[before]
-    if after:
+    if after?:
         after = id_map[after]
     if before and after:
         # Both border nodes are in the current spine item
@@ -145,7 +151,7 @@ def get_current_toc_nodes():
     if data.has_visible:
         ans = data.visible_anchors
     else:
-        if data.before:
+        if data.before?:
             ans[data.before] = True
         else:
             before = get_border_nodes(toc, id_map)[0]
@@ -156,6 +162,17 @@ def get_current_toc_nodes():
         fam = family_for_toc_node(x, parent_map, id_map)
         if fam?.length:
             r.push(fam)
+    if runtime.additional_debug:
+        families = v'[]'
+        for fam in r:
+            family = v'[]'
+            for node in fam:
+                family.push([node.id, node.title, node.dest, node.frag])
+            families.push(family)
+        toc_diag('current-nodes', {
+            'spine_name': current_spine_item()?.name or current_spine_item(),
+            'input': data, 'chosen_anchor_ids': Object.keys(ans), 'families': families,
+        })
     return r
 
 
@@ -165,7 +182,7 @@ def get_highlighted_toc_nodes(toc, parent_map, id_map, skip_parents):
     if data.has_visible:
         ans = data.visible_anchors
     else:
-        if data.before:
+        if data.before?:
             ans[data.before] = True
         else:
             before = get_border_nodes(toc, id_map)[0]
@@ -277,6 +294,12 @@ def recalculate_toc_anchor_positions(tam, plam):
     current_map.page_list_sorted_anchors = anchors
 
     set_toc_anchor_map(current_map)
+    if runtime.additional_debug:
+        toc_diag('recalculate-anchor-positions', {
+            'spine_name': name, 'toc_anchor_count': current_map.sorted_anchors.length,
+            'toc_anchor_ids': current_map.sorted_anchors, 'page_list_anchor_ids': current_map.page_list_sorted_anchors,
+            'positions': current_map.pos_map, 'page_list_positions': current_map.page_list_pos_map,
+        })
     return current_map
 
 
@@ -330,6 +353,7 @@ def update_visible_toc_anchors(toc_anchor_map, page_list_anchor_map, recalculate
 
 def find_anchor_before_range(r, toc_anchor_map, page_list_anchor_map):
     name = current_spine_item().name
+    root = flow_spine_section_for_name(name) if current_layout_mode() is 'flow' and has_flow_spine_sections() else None
     prev_anchor = None
     tam = current_toc_anchor_map(toc_anchor_map, page_list_anchor_map)
     anchors = toc_anchor_map[name]
@@ -339,7 +363,7 @@ def find_anchor_before_range(r, toc_anchor_map, page_list_anchor_map):
             anchor = amap[anchor_id]
             is_before = True
             if anchor.frag:
-                elem = document.getElementById(anchor.frag)
+                elem = root.querySelector('#' + window.CSS.escape(anchor.frag)) if root else document.getElementById(anchor.frag)
                 if elem:
                     q = document.createRange()
                     q.selectNode(elem)

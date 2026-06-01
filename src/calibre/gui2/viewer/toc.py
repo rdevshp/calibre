@@ -3,6 +3,8 @@
 
 
 import re
+import sys
+import time
 from functools import partial
 
 from qt.core import (
@@ -16,15 +18,18 @@ from qt.core import (
     QModelIndex,
     QStandardItem,
     QStandardItemModel,
+    QStyle,
     QStyledItemDelegate,
     Qt,
     QToolButton,
     QToolTip,
     QTreeView,
+    QTimer,
     QWidget,
     pyqtSignal,
 )
 
+from calibre import prints
 from calibre.gui2 import error_dialog
 from calibre.gui2.gestures import GestureManager
 from calibre.gui2.search_box import SearchBox2
@@ -33,6 +38,39 @@ from calibre.utils.localization import _
 
 
 class Delegate(QStyledItemDelegate):
+
+    def __init__(self, parent=None):
+        QStyledItemDelegate.__init__(self, parent)
+        self._last_toc_paint_diag = set()
+
+    def paint(self, painter, option, index):
+        QStyledItemDelegate.paint(self, painter, option, index)
+        model = index.model()
+        if not getattr(model, 'additional_debug', False):
+            return
+        item = model.itemFromIndex(index)
+        if item is None:
+            return
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        current = index == self.parent().currentIndex() if self.parent() is not None else False
+        if not (selected or current or item.is_being_viewed):
+            return
+        generation = getattr(model, 'current_toc_generation', 0)
+        key = (generation, item.node_id, selected, current, item.is_being_viewed)
+        if key in self._last_toc_paint_diag:
+            return
+        self._last_toc_paint_diag.add(key)
+        r = option.rect
+        prints(
+            'TOC-HILITE-DIAG qt.delegate-paint-toc-node',
+            {
+                'generation': generation, 'node_id': item.node_id, 'title': item.title,
+                'selected': selected, 'current': current, 'being_viewed': item.is_being_viewed,
+                'font_bold': option.font.bold(), 'font_italic': option.font.italic(),
+                'rect': (r.x(), r.y(), r.width(), r.height()),
+            },
+            file=sys.stderr,
+        )
 
     def helpEvent(self, ev, view, option, index):
         # Show a tooltip only if the item is truncated
@@ -54,6 +92,8 @@ class TOCView(QTreeView):
 
     def __init__(self, *args):
         QTreeView.__init__(self, *args)
+        self._toc_diag_seq = 0
+        self._last_paint_diag_seq = -1
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.delegate = Delegate(self)
         self.setItemDelegate(self.delegate)
@@ -80,10 +120,79 @@ class TOCView(QTreeView):
         model.current_toc_nodes_changed.connect(self.current_toc_nodes_changed, type=Qt.ConnectionType.QueuedConnection)
 
     def current_toc_nodes_changed(self, ancestors, nodes):
+        self._toc_diag_seq += 1
+        seq = self._toc_diag_seq
         if ancestors:
             self.auto_expand_indices(ancestors)
         if nodes:
             self.scrollTo(nodes[-1].index())
+        if getattr(self.model(), 'additional_debug', False):
+            prints(
+                'TOC-HILITE-DIAG qt.view-current-toc-nodes',
+                {
+                    'seq': seq,
+                    'node_ids': tuple(node.node_id for node in nodes),
+                    'node_titles': tuple(node.title for node in nodes),
+                    'current_node_id': nodes[-1].node_id if nodes else None,
+                    'snapshot': self.toc_diag_snapshot(),
+                },
+                file=sys.stderr,
+            )
+        if getattr(self.model(), 'additional_debug', False):
+            QTimer.singleShot(0, partial(self.report_delayed_toc_diag, seq, 'after-event-loop'))
+            QTimer.singleShot(50, partial(self.report_delayed_toc_diag, seq, 'after-50ms'))
+
+    def toc_diag_snapshot(self):
+        model = self.model()
+        sm = self.selectionModel()
+        current = self.currentIndex()
+        current_item = model.itemFromIndex(current) if model is not None and current.isValid() else None
+        selected_ids = []
+        if sm is not None:
+            for idx in sm.selectedIndexes():
+                item = model.itemFromIndex(idx)
+                if item is not None:
+                    selected_ids.append(item.node_id)
+        viewed_ids = tuple(node.node_id for node in model.viewed_nodes()) if model is not None else ()
+        rect = self.visualRect(current) if current.isValid() else None
+        viewport_size = self.viewport().size()
+        scrollbar = self.verticalScrollBar()
+        return {
+            'time': round(time.monotonic(), 6),
+            'view_visible': self.isVisible(),
+            'viewport_visible': self.viewport().isVisible(),
+            'updates_enabled': self.updatesEnabled(),
+            'viewport_updates_enabled': self.viewport().updatesEnabled(),
+            'has_focus': self.hasFocus(),
+            'current_index_valid': current.isValid(),
+            'current_node_id': getattr(current_item, 'node_id', None),
+            'selected_node_ids': tuple(selected_ids),
+            'viewed_node_ids': viewed_ids,
+            'current_visual_rect': (
+                rect.x(), rect.y(), rect.width(), rect.height()) if rect is not None and rect.isValid() else None,
+            'viewport_size': (viewport_size.width(), viewport_size.height()),
+            'vscroll': (scrollbar.value(), scrollbar.minimum(), scrollbar.maximum()) if scrollbar is not None else None,
+            'model_leaf_ids': getattr(model, 'current_toc_leaf_ids', ()),
+            'model_generation': getattr(model, 'current_toc_generation', 0),
+        }
+
+    def report_delayed_toc_diag(self, seq, label):
+        if getattr(self.model(), 'additional_debug', False):
+            prints(
+                'TOC-HILITE-DIAG qt.view-delayed-state',
+                {'seq': seq, 'label': label, 'snapshot': self.toc_diag_snapshot()},
+                file=sys.stderr,
+            )
+
+    def paintEvent(self, ev):
+        QTreeView.paintEvent(self, ev)
+        if getattr(self.model(), 'additional_debug', False) and self._last_paint_diag_seq != self._toc_diag_seq:
+            self._last_paint_diag_seq = self._toc_diag_seq
+            prints(
+                'TOC-HILITE-DIAG qt.view-paint-event',
+                {'seq': self._toc_diag_seq, 'snapshot': self.toc_diag_snapshot()},
+                file=sys.stderr,
+            )
 
     def auto_expand_indices(self, indices):
         for idx in indices:
@@ -258,8 +367,9 @@ class TOC(QStandardItemModel):
 
     current_toc_nodes_changed = pyqtSignal(object, object)
 
-    def __init__(self, toc=None):
+    def __init__(self, toc=None, additional_debug=False):
         QStandardItemModel.__init__(self)
+        self.additional_debug = additional_debug
         self.current_query = {'text':'', 'index':-1, 'items':()}
         self.all_items = depth_first = []
         normal_font = QApplication.instance().font()
@@ -271,6 +381,8 @@ class TOC(QStandardItemModel):
                 self.appendRow(TOCItem(t, 0, depth_first, normal_font, emphasis_font, self.depths))
         self.depths = tuple(sorted(self.depths))
         self.node_id_map = {x.node_id: x for x in self.all_items}
+        self.current_toc_leaf_ids = ()
+        self.current_toc_generation = 0
 
     def find_items(self, query):
         for item in self.all_items:
@@ -313,8 +425,12 @@ class TOC(QStandardItemModel):
         return QModelIndex()
 
     def update_current_toc_nodes(self, current_toc_leaves):
+        current_toc_leaves = tuple(current_toc_leaves)
+        self.current_toc_leaf_ids = current_toc_leaves
+        self.current_toc_generation += 1
         viewed_nodes = set()
         ancestors = {}
+        missing = [] if self.additional_debug else None
         for node_id in current_toc_leaves:
             node = self.node_id_map.get(node_id)
             if node is not None:
@@ -323,13 +439,28 @@ class TOC(QStandardItemModel):
                 viewed_nodes |= {x.node_id for x in ansc}
                 for x in ansc:
                     ancestors[x.node_id] = x.index()
+            elif missing is not None:
+                missing.append(node_id)
         nodes = []
+        changed_nodes = []
         for node in self.all_items:
             is_being_viewed = node.node_id in viewed_nodes
             if is_being_viewed:
                 nodes.append(node)
             if is_being_viewed != node.is_being_viewed:
                 node.set_being_viewed(is_being_viewed)
+                changed_nodes.append(node)
+        if self.additional_debug:
+            prints(
+                'TOC-HILITE-DIAG qt.update-current-toc-nodes',
+                {
+                    'input_leaf_ids': tuple(current_toc_leaves), 'missing_leaf_ids': tuple(missing),
+                    'viewed_node_ids': tuple(node.node_id for node in nodes),
+                    'viewed_titles': tuple(node.title for node in nodes),
+                    'changed_node_ids': tuple(node.node_id for node in changed_nodes),
+                },
+                file=sys.stderr,
+            )
         self.current_toc_nodes_changed.emit(tuple(ancestors.values()), nodes)
 
     def viewed_nodes(self):

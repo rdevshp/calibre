@@ -509,7 +509,8 @@ def sort_cfis(array_of_cfis):
 def at(x, y, doc):  # {{{
     # x, y are in viewport coordinates
     doc = doc or window.document
-    cdoc = doc
+    root = doc if doc.nodeType is Node.ELEMENT_NODE else None
+    cdoc = window.document if root else doc
     target = None
     tail = ''
     offset = None
@@ -518,6 +519,8 @@ def at(x, y, doc):  # {{{
     # Drill down into iframes, etc.
     while True:
         target = cdoc.elementFromPoint(x, y)
+        if root and target and not root.contains(target):
+            return None
         if not target or target is cdoc.documentElement or target is cdoc.body:
             # We ignore both html and body even though body could
             # have text nodes under it as performance is very poor if body
@@ -829,7 +832,7 @@ def scroll_to(cfi, callback, doc):  # {{{
 
 # }}}
 
-def at_point(x, y):  # {{{
+def at_point(x, y, doc):  # {{{
     # The CFI at the specified point. Different to at() in that this method
     # returns null if there is an error, and also calculates a point from
     # the CFI and returns null if the calculated point is far from the
@@ -839,14 +842,14 @@ def at_point(x, y):  # {{{
         Math.sqrt(Math.pow(p1[0]-p2[0], 2), Math.pow(p1[1]-p2[1], 2))
 
     try:
-        cfi = at(x, y)
+        cfi = at(x, y, doc)
     except:
         cfi = None
     if cfi is None:
         return None
 
     try:
-        decoded = decode_with_range(cfi)
+        decoded = decode_with_range(cfi, doc)
     except:
         decoded = None
     if not decoded:
@@ -863,7 +866,7 @@ def at_point(x, y):  # {{{
     return cfi
 # }}}
 
-def at_current():  # {{{
+def at_current(doc):  # {{{
     # We subtract one because the actual position query for CFI elements is relative to the
     # viewport, and the viewport coordinates actually go from 0 to the size - 1.
     # If we don't do this, the first line of queries will always fail in those cases where we
@@ -915,9 +918,12 @@ def at_current():  # {{{
     # In horizontal mode, X is the inline and Y is the block,
     # but it's reversed for vertical modes, so reverse the lookup.
     def at_point_vertical_mode(i, b):
-        return at_point(b, i)
+        return at_point(b, i, doc)
 
-    at_point_conditional = at_point_vertical_mode if scroll_viewport.vertical_writing_mode else at_point
+    def at_point_horizontal_mode(i, b):
+        return at_point(i, b, doc)
+
+    at_point_conditional = at_point_vertical_mode if scroll_viewport.vertical_writing_mode else at_point_horizontal_mode
 
     def i_loop(curb):
         curi = starti
@@ -942,7 +948,7 @@ def at_current():  # {{{
     # Use a spatial offset on the html element, since we could not find a
     # normal CFI
     x, y = scroll_viewport.x() + (0 if scroll_viewport.ltr else scroll_viewport.width()), scroll_viewport.y()
-    de = document.documentElement
+    de = doc if doc?.nodeType is Node.ELEMENT_NODE else document.documentElement
     rect = de.getBoundingClientRect()
     px = (x*100)/rect.width
     py = (y*100)/rect.height
@@ -952,7 +958,7 @@ def at_current():  # {{{
 
 # }}}
 
-def cfi_for_selection(r):  # {{{
+def cfi_for_selection(r, doc):  # {{{
     if not r:
         r = window.getSelection().getRangeAt(0)
 
@@ -965,15 +971,15 @@ def cfi_for_selection(r):  # {{{
         return container, offset
 
     return {
-        'start': encode(r.startContainer.ownerDocument, *pos(r.startContainer, r.startOffset)),
-        'end': encode(r.endContainer.ownerDocument, *pos(r.endContainer, r.endOffset)),
+        'start': encode(doc or r.startContainer.ownerDocument, *pos(r.startContainer, r.startOffset)),
+        'end': encode(doc or r.endContainer.ownerDocument, *pos(r.endContainer, r.endOffset)),
     }
 
 # }}}
 
-def range_from_cfi(start, end):  # {{{
-    start = decode(start)
-    end = decode(end)
+def range_from_cfi(start, end, doc):  # {{{
+    start = decode(start, doc)
+    end = decode(end, doc)
     if not start or start.error or not end or end.error:
         return
     r = document.createRange()

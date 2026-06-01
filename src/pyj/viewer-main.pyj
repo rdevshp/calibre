@@ -133,8 +133,9 @@ def show_error(title, msg, details):
     to_python.show_error(title, msg, details)
 
 
-def manifest_received(key, initial_position, pathtoebook, highlights, book_url, reading_rates, book_in_library_url, end_type, xhr, ev):
+def manifest_received(key, initial_position, pathtoebook, highlights, book_url, reading_rates, book_in_library_url, additional_debug, end_type, xhr, ev):
     nonlocal book
+    runtime.additional_debug = v'!!additional_debug'
     end_type = workaround_qt_bug(xhr, end_type)
     if end_type is 'load':
         book = new_book(key, {})
@@ -294,8 +295,8 @@ def redraw_tts_bar(pos):
 
 
 @from_python
-def start_book_load(key, initial_position, pathtoebook, highlights, book_url, reading_rates, book_in_library_url):
-    xhr = ajax('manifest', manifest_received.bind(None, key, initial_position, pathtoebook, highlights, book_url, reading_rates, book_in_library_url), ok_code=0)
+def start_book_load(key, initial_position, pathtoebook, highlights, book_url, reading_rates, book_in_library_url, additional_debug):
+    xhr = ajax('manifest', manifest_received.bind(None, key, initial_position, pathtoebook, highlights, book_url, reading_rates, book_in_library_url, additional_debug), ok_code=0)
     xhr.responseType = 'json'
     xhr.send()
 

@@ -23,13 +23,118 @@ from __python__ import bound_methods, hash_literals
 from dom import set_css
 from range_utils import wrap_range, unwrap
 from read_book.cfi import scroll_to as cfi_scroll_to
-from read_book.globals import current_spine_item, get_boss, rtl_page_progression, ltr_page_progression
+from read_book.globals import current_spine_item, get_boss, rtl_page_progression, ltr_page_progression, runtime
 from read_book.settings import opts
 from read_book.viewport import line_height, rem_size, scroll_viewport
 
 
+flow_spine_sections = v'[]'
+FLOW_CFI_PREFIX = '/2/4'
+last_flow_section_diag_key = None
+
+
+def toc_diag(tag, data):
+    if runtime.additional_debug:
+        print('TOC-HILITE-DIAG flow.{} {}'.format(tag, JSON.stringify(data)))
+
+
+def section_cfi_from_flow_cfi(cfi):
+    return cfi[len(FLOW_CFI_PREFIX):] if cfi?.startsWith(FLOW_CFI_PREFIX) else cfi
+
+
+def flow_cfi_from_section_cfi(cfi):
+    return cfi if cfi?.startsWith(FLOW_CFI_PREFIX) else (FLOW_CFI_PREFIX + cfi if cfi else cfi)
+
+
+def set_flow_spine_sections(sections):
+    nonlocal flow_spine_sections
+    flow_spine_sections = sections or v'[]'
+
+
+def has_flow_spine_sections():
+    return flow_spine_sections.length > 0
+
+
+def flow_spine_section_for_name(name):
+    for section in flow_spine_sections:
+        if section.dataset.calibreFlowSpineName is name:
+            return section
+
+
+def flow_spine_section_for_index(index):
+    for section in flow_spine_sections:
+        if int(section.dataset.calibreFlowSpineIndex) is index:
+            return section
+
+
+def flow_spine_section_for_node(node):
+    while node and node is not document:
+        if node.dataset?.calibreFlowSpineName:
+            return node
+        node = node.parentNode
+
+
+def section_block_start(section):
+    br = section.getBoundingClientRect()
+    return scroll_viewport.viewport_to_document_block(scroll_viewport.rect_block_start(br), section.ownerDocument)
+
+
+def section_block_end(section):
+    br = section.getBoundingClientRect()
+    return scroll_viewport.viewport_to_document_block(scroll_viewport.rect_block_end(br), section.ownerDocument)
+
+
+def current_flow_spine_section():
+    nonlocal last_flow_section_diag_key
+    if not has_flow_spine_sections():
+        return
+    target = scroll_viewport.block_pos() + min(scroll_viewport.block_size() / 3, max(line_height(), 1))
+    ans = flow_spine_sections[0]
+    for section in flow_spine_sections:
+        if section_block_start(section) <= target:
+            ans = section
+        else:
+            break
+    if runtime.additional_debug:
+        key = '{}:{}'.format(ans.dataset.calibreFlowSpineName, ans.dataset.calibreFlowSpineIndex)
+        if key is not last_flow_section_diag_key:
+            last_flow_section_diag_key = key
+            toc_diag('current-section', {
+                'name': ans.dataset.calibreFlowSpineName, 'index': ans.dataset.calibreFlowSpineIndex,
+                'scroll_block': scroll_viewport.block_pos(), 'target': target,
+                'section_start': section_block_start(ans), 'section_end': section_block_end(ans),
+                'viewport_block_size': scroll_viewport.block_size(), 'sections': flow_spine_sections.length,
+            })
+    return ans
+
+
+def current_flow_spine_item():
+    section = current_flow_spine_section()
+    if section:
+        return {
+            'name': section.dataset.calibreFlowSpineName,
+            'index': int(section.dataset.calibreFlowSpineIndex),
+        }
+
+
+def flow_section_progress_frac(section):
+    if not section:
+        return 0
+    start = section_block_start(section)
+    limit = max(0, section_block_end(section) - start - scroll_viewport.block_size())
+    if limit <= 0:
+        return 1
+    return Math.max(0, Math.min((scroll_viewport.block_pos() - start) / limit, 1))
+
+
 def flow_to_scroll_fraction(frac, on_initial_load):
-    scroll_viewport.scroll_to_in_block_direction(scroll_viewport.document_block_size() * frac)
+    section = flow_spine_section_for_name(current_spine_item()?.name) if has_flow_spine_sections() else None
+    if section:
+        start = section_block_start(section)
+        limit = max(0, section_block_end(section) - start - scroll_viewport.block_size())
+        scroll_viewport.scroll_to_in_block_direction(start + limit * frac)
+    else:
+        scroll_viewport.scroll_to_in_block_direction(scroll_viewport.document_block_size() * frac)
 
 
 small_scroll_events = v'[]'
@@ -694,11 +799,12 @@ def ensure_selection_boundary_visible(use_end):
 def jump_to_cfi(cfi):
     # Jump to the position indicated by the specified conformal fragment
     # indicator.
-    cfi_scroll_to(cfi, def(x, y):
+    root = flow_spine_section_for_name(current_spine_item()?.name) if has_flow_spine_sections() else None
+    def scroll_to_pos(x, y):
         # block is vertical if text is horizontal
         if scroll_viewport.horizontal_writing_mode:
             scroll_viewport.scroll_to_in_block_direction(y)
         # block is horizontal if text is vertical
         else:
             scroll_viewport.scroll_to_in_block_direction(x)
-    )
+    cfi_scroll_to(section_cfi_from_flow_cfi(cfi) if root else cfi, scroll_to_pos, root)

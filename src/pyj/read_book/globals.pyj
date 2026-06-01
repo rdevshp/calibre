@@ -88,6 +88,7 @@ IN_DEVELOP_MODE = '__IN_DEVELOP_MODE__'
 runtime = {
     'is_standalone_viewer': False,
     'viewer_in_full_screen': False,
+    'additional_debug': False,
     'in_develop_mode': IN_DEVELOP_MODE is '1',
     'QT_VERSION': 0,
 }

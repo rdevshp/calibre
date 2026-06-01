@@ -335,6 +335,131 @@ def unserialize_html(serialized_data, proceed, postprocess_dom, root_name):
         proceed()
 
 
+def add_default_document_head(root_name):
+    document.head.appendChild(
+        E.style(type='text/css', 'html::-webkit-scrollbar, body::-webkit-scrollbar { display: none !important }')
+    )
+    if runtime.is_standalone_viewer and root_name:
+        if root_name.indexOf('/') > -1:
+            base = window.location.pathname.rpartition('/')[0]
+            base = f'{window.location.protocol}//{window.location.hostname}{base}/' + root_name
+            document.head.appendChild(E.base(href=base))
+
+    if not runtime.is_standalone_viewer:
+        document.head.appendChild(E.style(type='text/css', 'html {{ font-family: {} }}'.format(window.default_font_family or "sans-serif")))
+
+
+def process_modern_children(node, parent, ns_map, load_required, onload):
+    if not node.c:
+        return
+    stack = v'[]'
+    for v'var i = node.c.length; i-- > 0;':  # noqa: unused-local
+        child = v'node.c[i]'
+        if child.n is not 'meta' and child.n is not 'base':
+            stack.push(v'[child, parent]')
+    process_stack(stack, None, ns_map, load_required, onload)
+
+
+def add_flow_modern_item(item, load_required, onload):
+    serialized_data = item.root_data
+    html = serialized_data.tree
+    ns_map = serialized_data.ns_map
+    section = E.section()
+    section.dataset.calibreFlowSpineName = item.name
+    section.dataset.calibreFlowSpineIndex = item.index + ''
+    section.style.display = 'block'
+    document.body.appendChild(section)
+    for child in html.c:
+        if child.n is 'head':
+            process_modern_children(child, document.head, ns_map, load_required, onload)
+        elif child.n is 'body':
+            apply_attributes(child, section, ns_map)
+            section.dataset.calibreFlowSpineName = item.name
+            section.dataset.calibreFlowSpineIndex = item.index + ''
+            section.style.display = 'block'
+            if child.x:
+                section.appendChild(document.createTextNode(child.x))
+            process_modern_children(child, section, ns_map, load_required, onload)
+    return section
+
+
+def add_flow_legacy_item(item, load_required, onload):
+    serialized_data = item.root_data
+    tag_map = serialized_data.tag_map
+    tree = serialized_data.tree
+    ns_map = serialized_data.ns_map
+    head, body = tree[1], tree[2]  # noqa: unused-local
+    stack = v'[]'
+    for v'var i = head.length - 1; i >= 1; i--':
+        stack.push(v'[head[i], document.head]')
+    process_stack(stack, tag_map, ns_map, load_required, onload)
+    bnode = tag_map[body[0]]
+    section = E.section()
+    apply_attributes(bnode, section, ns_map)
+    section.dataset.calibreFlowSpineName = item.name
+    section.dataset.calibreFlowSpineIndex = item.index + ''
+    section.style.display = 'block'
+    document.body.appendChild(section)
+    if bnode.x:
+        section.appendChild(document.createTextNode(bnode.x))
+    for v'var i = body.length - 1; i >= 1; i--':  # noqa: unused-local
+        stack.push(v'[body[i], section]')
+    process_stack(stack, tag_map, ns_map, load_required, onload)
+    return section
+
+
+def unserialize_flow_html(items, proceed, postprocess_dom, root_name):
+    nonlocal hide_tooltips
+    hide_tooltips = opts.hide_tooltips
+    first = items[0].root_data if items.length else None
+    if not first:
+        proceed()
+        return v'[]'
+    html = first.tag_map[0] if first.tag_map else first.tree
+    ns_map = first.ns_map
+    remove_all_attributes(document.documentElement, document.head, document.body)
+    clear(document.head, document.body)
+    apply_attributes(html, document.documentElement, ns_map)
+    add_default_document_head(root_name)
+
+    load_required = set()
+    proceeded = False
+    hang_timeout = 5
+
+    def hangcheck():
+        nonlocal proceeded
+        if not proceeded:
+            proceeded = True
+            print(f'WARNING: All resources did not load in {hang_timeout} seconds, proceeding anyway ({load_required.length} resources left)')
+            proceed()
+
+    def onload():
+        nonlocal proceeded
+        load_required.discard(this)
+        if not load_required.length and not proceeded:
+            proceeded = True
+            proceed()
+
+    sections = v'[]'
+    process_stack.tag_id = 1
+    for item in items:
+        if item.root_data.tag_map:
+            sections.push(add_flow_legacy_item(item, load_required, onload))
+        else:
+            sections.push(add_flow_modern_item(item, load_required, onload))
+    if postprocess_dom:
+        postprocess_dom()
+    ev = document.createEvent('Event')
+    ev.initEvent('DOMContentLoaded', True, True)
+    document.dispatchEvent(ev)
+    if load_required.length:
+        setTimeout(hangcheck, hang_timeout * 1000)
+    else:
+        proceeded = True
+        proceed()
+    return sections
+
+
 
 def unserialize_html_legacy(serialized_data, proceed, postprocess_dom, root_name):
     tag_map = serialized_data.tag_map

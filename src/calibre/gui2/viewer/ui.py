@@ -99,13 +99,14 @@ class EbookViewer(MainWindow):
     book_prepared = pyqtSignal(object, object)
     MAIN_WINDOW_STATE_VERSION = 1
 
-    def __init__(self, open_at=None, continue_reading=None, force_reload=False, calibre_book_data=None):
+    def __init__(self, open_at=None, continue_reading=None, force_reload=False, calibre_book_data=None, additional_debug=False):
         MainWindow.__init__(self, None)
         get_boss(self)
 
         self.annotations_saver = None
         self.last_read_pos_saver = None
         self.calibre_book_data_for_first_book = calibre_book_data
+        self.additional_debug = additional_debug
         self.shutting_down = self.close_forced = self.shutdown_done = False
         self.force_reload = force_reload
         connect_lambda(self.book_preparation_started, self, lambda self: self.loading_overlay(_(
@@ -289,11 +290,16 @@ class EbookViewer(MainWindow):
     def message_from_other_instance(self, msg):
         try:
             msg = json.loads(msg)
-            path, open_at = msg
+            if len(msg) == 2:
+                path, open_at = msg
+                additional_debug = False
+            else:
+                path, open_at, additional_debug = msg
         except Exception as err:
             print('Invalid message from other instance', file=sys.stderr)
             print(err, file=sys.stderr)
             return
+        self.additional_debug = bool(additional_debug)
         self.load_ebook(path, open_at=open_at)
         self.raise_and_focus()
         self.activateWindow()
@@ -660,7 +666,9 @@ class EbookViewer(MainWindow):
         highlights = self.current_book_data['annotations_map']['highlight']
         self.highlights_widget.load(highlights)
         rates = load_reading_rates(self.current_book_data['annotations_path_key'])
-        self.web_view.start_book_load(initial_position=initial_position, highlights=highlights, current_book_data=self.current_book_data, reading_rates=rates)
+        self.web_view.start_book_load(
+            initial_position=initial_position, highlights=highlights, current_book_data=self.current_book_data,
+            reading_rates=rates, additional_debug=self.additional_debug)
         performance_monitor('webview loading requested')
 
         self.lookup_widget.book_loaded(self.current_book_data)
@@ -678,7 +686,7 @@ class EbookViewer(MainWindow):
             raw = f.read()
         self.current_book_data['manifest'] = manifest = json.loads(raw)
         toc = manifest.get('toc')
-        self.toc_model = TOC(toc)
+        self.toc_model = TOC(toc, additional_debug=self.additional_debug)
         self.toc.setModel(self.toc_model)
         self.bookmarks_widget.set_bookmarks(self.current_book_data['annotations_map']['bookmark'])
         self.current_book_data['metadata'] = set_book_path.parsed_metadata
